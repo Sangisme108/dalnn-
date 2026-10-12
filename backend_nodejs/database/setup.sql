@@ -1,0 +1,19 @@
+-- Run with the MySQL CLI from the repository root against a fresh demo database.
+SOURCE database.sql;
+USE mini_supermarket;
+SOURCE backend_nodejs/database/migrations/2026-05-03-add-import-price.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-07-online-orders-and-reviews.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-10-work-shifts-status-and-order-shift.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-16-customer-cart-ownership.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-16-online-checkout-delivery-method.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-16-online-order-rejection-reason.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-16-online-orders-customer.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-16-user-vouchers-claim.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-17-employee-schedule.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-17-work-shift-management.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-19-vnpay-payment-fields.sql;
+SOURCE backend_nodejs/database/migrations/2026-05-22-bank-webhook-payments.sql;
+SOURCE backend_nodejs/database/migrations/2026-06-02-customer-auth-password-reset.sql;
+SOURCE backend_nodejs/database/migrations/2026-06-03-order-loyalty-points.sql;
+SOURCE backend_nodejs/database/migrations/2026-06-12-sync-order-payment-status-default.sql;
+SOURCE backend_nodejs/database/migrations/2026-06-14-order-pickup-time.sql;

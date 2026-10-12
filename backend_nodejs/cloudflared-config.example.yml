@@ -1,0 +1,7 @@
+tunnel: quanlysieuthi-tunnel
+credentials-file: /Users/mac/.cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  - hostname: <subdomain-cua-ban>
+    service: http://localhost:3000
+  - service: http_status:404

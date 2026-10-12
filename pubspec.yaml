@@ -1,0 +1,54 @@
+name: sieuthimini
+description: "A new Flutter project."
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: "none" # Remove this line if you wish to publish to pub.dev
+
+# The following defines the version and build number for your application.
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # CÁC GÓI CẦN THIẾT KHI CHẠY ỨNG DỤNG
+  cupertino_icons: ^1.0.8
+  provider: ^6.0.5
+  http: ^1.2.2
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  flutter_svg: ^2.0.7
+  image_picker: ^0.8.7+4
+  json_serializable: ^6.7.1
+  mobile_scanner: ^5.2.3
+  permission_handler: ^11.3.1
+  url_launcher: ^6.3.1
+  qr_flutter: ^4.1.0
+
+  fl_chart: any
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  # CÁC GÓI CẦN THIẾT KHI PHÁT TRIỂN (ĐÃ SỬA VỊ TRÍ)
+  hive_generator: ^2.0.1
+  build_runner: ^2.4.9
+  intl: ^0.18.1
+  hive_flutter: ^1.1.0
+  json_serializable: ^6.7.1
+
+  # LINTS
+  flutter_lints: ^5.0.0
+
+# The following section is specific to Flutter packages.
+flutter:
+  uses-material-design: true
+
+  # PHẦN KHAI BÁO ASSETS ĐÚNG CẤU TRÚC
+  assets:
+    - assets/images/
+    - assets/products/
+    - assets/data/
