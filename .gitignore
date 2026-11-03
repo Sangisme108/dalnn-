@@ -66,3 +66,7 @@ ios/Pods/
 *.sqlite3
 *.db
 android/build_output.txt
+
+# Machine-specific editor configuration and local migration backups
+.vscode/
+.migration/

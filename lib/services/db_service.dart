@@ -602,10 +602,8 @@ class DBService {
     if (userId == null) return localCart;
     try {
       final remoteCart = await ApiService.fetchCart(userId);
-      if (remoteCart.isEmpty && localCart.isNotEmpty) {
-        await ApiService.saveCart(userId, localCart);
-        return localCart;
-      }
+      // Backend trống nghĩa là khách đã xóa/đặt xong giỏ. Không khôi phục
+      // giỏ cache cũ và làm các sản phẩm đã xóa xuất hiện lại.
       await carts().put(email, remoteCart);
       return remoteCart;
     } catch (_) {

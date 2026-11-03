@@ -27,6 +27,7 @@ const voucherRoutes = require("./routes/voucher.routes");
 const myOrderRoutes = require("./routes/myOrder.routes");
 const paymentRoutes = require("./routes/payment.routes");
 const pointRoutes = require("./routes/point.routes");
+const aiRoutes = require("./routes/ai.routes");
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
@@ -49,6 +50,7 @@ app.use("/api/vouchers", voucherRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/webhook", paymentRoutes);
 app.use("/api/points", pointRoutes);
+app.use("/api/ai", aiRoutes);
 app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
 
 app.get("/", (req, res) => {
@@ -78,10 +80,15 @@ app.get("/api/test-db", async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, "0.0.0.0", () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server đang chạy tại http://localhost:${PORT}`);
   console.log(
     "Điện thoại thật (cùng Wi-Fi): dùng IP máy tính, ví dụ http://192.168.x.x:" +
       PORT,
   );
+});
+
+server.on("error", (error) => {
+  console.error("Không thể khởi động server:", error.message);
+  process.exitCode = 1;
 });

@@ -4,6 +4,7 @@ import '../models/order.dart';
 import '../models/order_line.dart';
 import '../models/product.dart';
 import '../services/db_service.dart';
+import '../services/api_service.dart';
 import '../utils/product_asset_resolver.dart';
 import '../widgets/product_image_widget.dart';
 
@@ -76,6 +77,63 @@ class OrderDetailScreen extends StatelessWidget {
       return Colors.red;
     }
     return Colors.blueGrey;
+  }
+
+  bool _canCancelOrder() {
+    final status = order.status.toLowerCase();
+    return !status.contains('completed') &&
+        !status.contains('hoàn thành') &&
+        !status.contains('cancel') &&
+        !status.contains('hủy') &&
+        !status.contains('rejected') &&
+        !status.contains('từ chối');
+  }
+
+  Future<void> _showCancelDialog(BuildContext context) async {
+    final reasonController = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Hủy đơn hàng'),
+        content: TextField(
+          controller: reasonController,
+          maxLines: 3,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Lý do hủy',
+            hintText: 'Ví dụ: Muốn đổi địa chỉ giao hàng',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Quay lại')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () {
+              final value = reasonController.text.trim();
+              if (value.isNotEmpty) Navigator.pop(dialogContext, value);
+            },
+            child: const Text('Xác nhận hủy'),
+          ),
+        ],
+      ),
+    );
+    reasonController.dispose();
+    if (reason == null || reason.isEmpty || !context.mounted) return;
+    final userId = DBService.currentUserId();
+    if (userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bạn cần đăng nhập để hủy đơn hàng.')));
+      return;
+    }
+    try {
+      await ApiService.cancelMyOrder(userId: userId, orderId: order.id, reason: reason);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã gửi yêu cầu hủy đơn hàng.')));
+      Navigator.pop(context, true);
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error is ApiException ? error.message : 'Chưa thể hủy đơn hàng.')));
+    }
   }
 
   Widget _buildLineItem(OrderLine item) {
@@ -297,6 +355,23 @@ class OrderDetailScreen extends StatelessWidget {
           const SizedBox(height: 14),
           _buildOrderInfoCard(),
           const SizedBox(height: 18),
+          if (_canCancelOrder()) ...[
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _showCancelDialog(context),
+                icon: const Icon(Icons.cancel_outlined),
+                label: const Text('Hủy đơn hàng'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.redAccent,
+                  side: const BorderSide(color: Colors.redAccent),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(

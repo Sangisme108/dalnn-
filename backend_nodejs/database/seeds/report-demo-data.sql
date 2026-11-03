@@ -2,23 +2,23 @@
 
 INSERT INTO categories(category_name)
 VALUES
-('Äá»“ uá»‘ng'),
-('Äá»“ Äƒn nhanh'),
-('Gia vá»‹'),
-('Sá»¯a'),
-('BÃ¡nh káº¹o'),
-('Äá»“ gia dá»¥ng')
+('Đồ uống'),
+('Đồ ăn nhanh'),
+('Gia vị'),
+('Sữa'),
+('Bánh kẹo'),
+('Đồ gia dụng')
 ON DUPLICATE KEY UPDATE category_name = VALUES(category_name);
 
 INSERT INTO inventory_items(barcode, item_name, price, import_price, unit, stock, status)
 VALUES
 ('893000000001', 'Coca Cola lon 330ml', 10000, 7000, 'lon', 120, 'active'),
 ('893000000002', 'Pepsi lon 330ml', 10000, 6800, 'lon', 110, 'active'),
-('893000000003', 'MÃ¬ Háº£o Háº£o tÃ´m chua cay', 4500, 3200, 'gÃ³i', 230, 'active'),
-('893000000004', 'Sá»¯a Vinamilk 180ml', 8000, 5500, 'há»™p', 100, 'active'),
-('893000000005', 'BÃ¡nh Oreo', 12000, 8500, 'gÃ³i', 90, 'active'),
-('893000000006', 'NÆ°á»›c suá»‘i Lavie 500ml', 5000, 3000, 'chai', 150, 'active'),
-('893000000007', 'Dáº§u Äƒn TÆ°á»ng An 1L', 45000, 38000, 'chai', 50, 'active')
+('893000000003', 'Mì Hảo Hảo tôm chua cay', 4500, 3200, 'gói', 230, 'active'),
+('893000000004', 'Sữa Vinamilk 180ml', 8000, 5500, 'hộp', 100, 'active'),
+('893000000005', 'Bánh Oreo', 12000, 8500, 'gói', 90, 'active'),
+('893000000006', 'Nước suối Lavie 500ml', 5000, 3000, 'chai', 150, 'active'),
+('893000000007', 'Dầu ăn Tường An 1L', 45000, 38000, 'chai', 50, 'active')
 ON DUPLICATE KEY UPDATE
   item_name = VALUES(item_name),
   price = VALUES(price),
@@ -29,13 +29,13 @@ ON DUPLICATE KEY UPDATE
 
 INSERT INTO products(product_name, barcode, description, image_url, price, unit, stock, min_stock, category_id, status)
 VALUES
-('Coca Cola lon 330ml', '893000000001', 'NÆ°á»›c ngá»t cÃ³ gas', '', 10000, 'lon', 100, 10, (SELECT category_id FROM categories WHERE category_name = 'Äá»“ uá»‘ng'), 'active'),
-('Pepsi lon 330ml', '893000000002', 'NÆ°á»›c ngá»t cÃ³ gas', '', 10000, 'lon', 100, 10, (SELECT category_id FROM categories WHERE category_name = 'Äá»“ uá»‘ng'), 'active'),
-('MÃ¬ Háº£o Háº£o tÃ´m chua cay', '893000000003', 'MÃ¬ Äƒn liá»n', '', 4500, 'gÃ³i', 200, 20, (SELECT category_id FROM categories WHERE category_name = 'Äá»“ Äƒn nhanh'), 'active'),
-('Sá»¯a Vinamilk 180ml', '893000000004', 'Sá»¯a há»™p', 'assets/images/suatuoi.jpg', 8000, 'há»™p', 80, 10, (SELECT category_id FROM categories WHERE category_name = 'Sá»¯a'), 'active'),
-('BÃ¡nh Oreo', '893000000005', 'BÃ¡nh quy socola', '', 12000, 'gÃ³i', 60, 10, (SELECT category_id FROM categories WHERE category_name = 'BÃ¡nh káº¹o'), 'active'),
-('NÆ°á»›c suá»‘i Lavie 500ml', '893000000006', 'NÆ°á»›c suá»‘i Ä‘Ã³ng chai', 'assets/products/lavie.jpg', 5000, 'chai', 120, 10, (SELECT category_id FROM categories WHERE category_name = 'Äá»“ uá»‘ng'), 'active'),
-('Dáº§u Äƒn TÆ°á»ng An 1L', '893000000007', 'Dáº§u Äƒn thá»±c váº­t', '', 45000, 'chai', 45, 10, (SELECT category_id FROM categories WHERE category_name = 'Gia vá»‹'), 'active')
+('Coca Cola lon 330ml', '893000000001', 'Nước ngọt có gas', '', 10000, 'lon', 100, 10, (SELECT category_id FROM categories WHERE category_name = 'Đồ uống'), 'active'),
+('Pepsi lon 330ml', '893000000002', 'Nước ngọt có gas', '', 10000, 'lon', 100, 10, (SELECT category_id FROM categories WHERE category_name = 'Đồ uống'), 'active'),
+('Mì Hảo Hảo tôm chua cay', '893000000003', 'Mì ăn liền', '', 4500, 'gói', 200, 20, (SELECT category_id FROM categories WHERE category_name = 'Đồ ăn nhanh'), 'active'),
+('Sữa Vinamilk 180ml', '893000000004', 'Sữa hộp', 'assets/images/suatuoi.jpg', 8000, 'hộp', 80, 10, (SELECT category_id FROM categories WHERE category_name = 'Sữa'), 'active'),
+('Bánh Oreo', '893000000005', 'Bánh quy socola', '', 12000, 'gói', 60, 10, (SELECT category_id FROM categories WHERE category_name = 'Bánh kẹo'), 'active'),
+('Nước suối Lavie 500ml', '893000000006', 'Nước suối đóng chai', 'assets/products/lavie.jpg', 5000, 'chai', 120, 10, (SELECT category_id FROM categories WHERE category_name = 'Đồ uống'), 'active'),
+('Dầu ăn Tường An 1L', '893000000007', 'Dầu ăn thực vật', '', 45000, 'chai', 45, 10, (SELECT category_id FROM categories WHERE category_name = 'Gia vị'), 'active')
 ON DUPLICATE KEY UPDATE
   product_name = VALUES(product_name),
   price = VALUES(price),
@@ -45,7 +45,7 @@ ON DUPLICATE KEY UPDATE
   status = 'active';
 
 INSERT INTO inventory_logs(inventory_item_id, product_id, employee_id, action, quantity, import_price, note)
-SELECT ii.inventory_item_id, p.product_id, u.user_id, 'import', 50, ii.import_price, 'Seed dá»¯ liá»‡u nháº­p kho'
+SELECT ii.inventory_item_id, p.product_id, u.user_id, 'import', 50, ii.import_price, 'Seed dữ liệu nhập kho'
 FROM inventory_items ii
 JOIN products p ON p.barcode = ii.barcode
 JOIN users u ON u.email = 'admin@gmail.com'
@@ -55,7 +55,7 @@ WHERE ii.barcode IN ('893000000001','893000000002','893000000003','893000000004'
     FROM inventory_logs il
     WHERE il.inventory_item_id = ii.inventory_item_id
       AND il.action = 'import'
-      AND il.note = 'Seed dá»¯ liá»‡u nháº­p kho'
+      AND il.note = 'Seed dữ liệu nhập kho'
   );
 
 INSERT INTO orders(customer_id, employee_id, order_type, total_amount, discount_amount, final_amount, status, payment_status, shipping_address, created_at)

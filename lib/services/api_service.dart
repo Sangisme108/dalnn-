@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -20,7 +21,9 @@ Duration get _shiftTimeout =>
 
 class ApiException implements Exception {
   final String message;
-  ApiException(this.message);
+  final int? statusCode;
+  final bool outcomeUnknown;
+  ApiException(this.message, {this.statusCode, this.outcomeUnknown = false});
 
   @override
   String toString() => message;
@@ -125,22 +128,45 @@ class ApiService {
   };
 
   static dynamic _decode(http.Response response) {
-    final body = response.body.isEmpty
-        ? <String, dynamic>{}
-        : jsonDecode(utf8.decode(response.bodyBytes));
+    dynamic body;
+    try {
+      body = response.bodyBytes.isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(utf8.decode(response.bodyBytes));
+    } on FormatException {
+      throw ApiException(
+        response.statusCode == 404
+            ? 'Backend không tìm thấy đường dẫn API (HTTP 404).'
+            : 'Backend trả phản hồi không hợp lệ (HTTP ${response.statusCode}), chưa đọc được kết quả xử lý.',
+        statusCode: response.statusCode,
+        outcomeUnknown: response.statusCode < 400 || response.statusCode >= 500,
+      );
+    }
     if (response.statusCode >= 400) {
       final message = body is Map
-          ? (body['error'] ??
-                    body['message'] ??
+          ? (body['message'] ??
+                    body['error'] ??
                     'Lỗi API ${response.statusCode}')
                 .toString()
           : 'Lỗi API ${response.statusCode}';
-      throw ApiException(message);
+      final guidance = response.statusCode == 401 ? ' Bạn đăng nhập lại rồi thử nhé.' : '';
+      throw ApiException('$message (HTTP ${response.statusCode}).$guidance',
+        statusCode: response.statusCode, outcomeUnknown: response.statusCode >= 500);
     }
     if (body is Map && body['success'] == false) {
       throw ApiException((body['message'] ?? 'API trả về lỗi').toString());
     }
     return body;
+  }
+
+  static String requestErrorMessage(Object error) {
+    if (error is ApiException) return error.message;
+    if (error is TimeoutException) return 'Yêu cầu quá thời gian chờ; chưa nhận được kết quả từ backend.';
+    if (error is http.ClientException || RegExp(r'SocketException|connection refused|failed host lookup', caseSensitive: false).hasMatch(error.toString())) {
+      return 'Ứng dụng không gửi hoặc nhận được phản hồi từ $baseUrl. Bạn kiểm tra kết nối mạng của thiết bị nhé.';
+    }
+    if (error is FormatException) return 'Không đọc được phản hồi của hệ thống; chưa xác nhận được kết quả thao tác.';
+    return 'Ứng dụng gặp lỗi xử lý yêu cầu. Chưa xác nhận được kết quả; bạn kiểm tra lại trước khi gửi lại thao tác.';
   }
 
   static List<dynamic> _dataList(dynamic body) {
@@ -470,6 +496,89 @@ class ApiService {
         .toList();
   }
 
+  static Future<String> askGeminiAboutProduct({
+    required int productId,
+    required String question,
+  }) async {
+    final response = await http.post(
+      _uri('/api/ai/product-introduction'),
+      headers: _headers,
+      body: jsonEncode({'productId': productId, 'question': question}),
+    ).timeout(_timeout);
+    final data = _dataMap(_decode(response));
+    final answer = data['answer'];
+    if (answer is! String || answer.trim().isEmpty) {
+      throw ApiException('Gemini không trả về nội dung');
+    }
+    return answer.trim();
+  }
+
+  static Future<String> askGeminiSalesAdvice(
+    String message, {
+    List<String>? candidateProductIds,
+    double? maxPrice,
+  }) async {
+    final response = await http.post(
+      _uri('/api/ai/sales-advice'),
+      headers: _headers,
+      body: jsonEncode({
+        'message': message,
+        if (candidateProductIds != null) 'candidateProductIds': candidateProductIds,
+        if (maxPrice != null) 'maxPrice': maxPrice,
+      }),
+    ).timeout(_timeout);
+    final data = _dataMap(_decode(response));
+    final answer = data['answer'];
+    if (answer is! String || answer.trim().isEmpty) {
+      throw ApiException('Gemini không trả về nội dung tư vấn');
+    }
+    return answer.trim();
+  }
+
+  static Future<String> askGeminiReply(
+    String message, {
+    Map<String, dynamic>? toolResult,
+  }) async {
+    final response = await http.post(
+      _uri('/api/ai/reply'),
+      headers: _headers,
+      // Kết quả tra cứu thực tế được Gemini dùng để diễn đạt linh hoạt.
+      // Không bao giờ gửi dữ liệu tự suy đoán từ giao diện.
+      body: jsonEncode({'message': message, if (toolResult != null) 'toolResult': toolResult}),
+    ).timeout(_timeout);
+    final data = _dataMap(_decode(response));
+    final answer = data['answer'];
+    if (answer is! String || answer.trim().isEmpty) throw ApiException('Gemini không trả lời');
+    return answer.trim();
+  }
+
+  /// Chat chính của SmartSales. Backend mới là nơi Gemini được phép gọi
+  /// Function Calling và xác thực thao tác giỏ hàng với dữ liệu CSDL.
+  static Future<Map<String, dynamic>> askSmartSalesChat({
+    required int userId,
+    required String message,
+    List<String>? candidateProductIds,
+    String? confirmedProductId,
+    int? confirmedQuantity,
+    String cartMode = 'add',
+  }) async {
+    final response = await http.post(
+      _uri('/api/ai/chat'),
+      headers: _userHeadersFor(userId),
+      body: jsonEncode({
+        'message': message,
+        if (candidateProductIds != null) 'candidateProductIds': candidateProductIds,
+        if (confirmedProductId != null && confirmedQuantity != null)
+          'confirmedCart': {
+            'productId': int.tryParse(confirmedProductId),
+            'quantity': confirmedQuantity,
+            'mode': cartMode,
+          },
+      }),
+    ).timeout(_timeout);
+    return _dataMap(_decode(response));
+  }
+
   static Future<Product> createProduct(Product product) async {
     final response = await http
         .post(
@@ -649,15 +758,26 @@ class ApiService {
     required int userId,
     required String orderId,
     required String reason,
+    @visibleForTesting http.Client? client,
+    @visibleForTesting Duration? requestTimeout,
   }) async {
-    final response = await http
-        .put(
-          _uri('/orders/$orderId/cancel'),
-          headers: _userHeadersFor(userId),
-          body: jsonEncode({'reason': reason.trim()}),
-        )
-        .timeout(_timeout);
-    return _dataMap(_decode(response));
+    try {
+      final response = await (client == null
+          ? http.put(_uri('/orders/$orderId/cancel'), headers: _userHeadersFor(userId), body: jsonEncode({'reason': reason.trim()}))
+          : client.put(_uri('/orders/$orderId/cancel'), headers: _userHeadersFor(userId), body: jsonEncode({'reason': reason.trim()})))
+          .timeout(requestTimeout ?? _timeout);
+      final result = _dataMap(_decode(response));
+      final id = '${result['order_id'] ?? result['id'] ?? ''}';
+      final status = '${result['order_status'] ?? result['status'] ?? ''}'.toLowerCase();
+      if (id != orderId || !const {'cancelled', 'canceled', 'đã hủy', 'hủy'}.contains(status)) {
+        throw ApiException('Backend chưa trả trạng thái đã hủy cho đơn #$orderId.', outcomeUnknown: true);
+      }
+      return result;
+    } on TimeoutException {
+      throw ApiException('Quá thời gian chờ phản hồi hủy đơn #$orderId. Backend có thể vẫn đang xử lý.', outcomeUnknown: true);
+    } on http.ClientException {
+      throw ApiException('Ứng dụng không nhận được phản hồi hủy đơn #$orderId từ $baseUrl.', outcomeUnknown: true);
+    }
   }
 
   static Future<Order> fetchOrderDetail(String orderId) async {

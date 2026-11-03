@@ -575,8 +575,9 @@ router.put("/:id/received", requireAuth, async (req, res) => {
 });
 
 router.put("/:id/cancel", requireAuth, async (req, res) => {
-  const connection = await pool.getConnection();
+  let connection;
   try {
+    connection = await pool.getConnection();
     const customerId = currentUserId(req);
     const reason = String(
       req.body.reason || req.body.cancellation_reason || "",
@@ -675,14 +676,22 @@ router.put("/:id/cancel", requireAuth, async (req, res) => {
       data: cancelled,
     });
   } catch (error) {
-    await connection.rollback();
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error('Order cancel rollback failed:', rollbackError.code || rollbackError.name);
+      }
+    }
+    const errorCode = error.code || 'ORDER_CANCEL_FAILED';
+    console.error('Order cancellation failed:', { orderId: req.params.id, code: errorCode, message: error.message });
     res.status(500).json({
       success: false,
-      message: "Lỗi hủy đơn hàng",
-      error: error.message,
+      message: `Không xử lý được hủy đơn hàng (${errorCode}).`,
+      code: errorCode,
     });
   } finally {
-    connection.release();
+    if (connection) connection.release();
   }
 });
 

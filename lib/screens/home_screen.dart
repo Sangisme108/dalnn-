@@ -30,6 +30,7 @@ import '../widgets/slide_page_route.dart';
 import 'product_detail_screen.dart';
 import '../utils/product_asset_resolver.dart';
 import '../utils/product_stock_utils.dart';
+import '../widgets/smart_sales_chatbox.dart';
 
 enum HomeFilterOption { bestSeller, priceAsc, priceDesc, inStockOnly }
 
@@ -1338,9 +1339,11 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
 
       // LOẠI BỎ SingleChildScrollView
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-        child: Column(
+      body: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Promo banner (Image)
@@ -1494,7 +1497,10 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ],
-        ),
+            ),
+          ),
+          const SmartSalesChatButton(),
+        ],
       ),
 
       floatingActionButton: null,
