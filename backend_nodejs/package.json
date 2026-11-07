@@ -5,6 +5,16 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
+    "test:auth": "node scripts/test-authorization.js",
+    "test:billing": "node scripts/test-order-billing.js",
+    "test:inventory": "node scripts/test-inventory-transfer.js",
+    "test:ai": "node scripts/test-ai-chat-validation.js && node scripts/test-ai-cart.js",
+    "eval:ai": "node scripts/eval-ai-live.js --run",
+    "diagnose:ai": "node scripts/diagnose-gemini.js --run",
+    "test:ai:diagnostics": "node scripts/test-gemini-diagnostics.js",
+    "eval:ai:live": "node scripts/eval-ai-live.js --run",
+    "db:migrate:reporting": "node scripts/migrate-reporting.js",
+    "test:reporting:mysql": "node scripts/test-reporting-mysql.js --run",
     "test:vnpay": "node scripts/test-vnpay-sign.js"
   },
   "keywords": [],

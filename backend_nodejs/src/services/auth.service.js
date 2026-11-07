@@ -1,7 +1,7 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'mini_market_secret';
+const { secret: JWT_SECRET } = require('../config/jwt');
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const RESET_TOKEN_EXPIRES_IN = process.env.RESET_TOKEN_EXPIRES_IN || '15m';
 const BCRYPT_ROUNDS = Number(process.env.BCRYPT_ROUNDS || 10);
@@ -29,9 +29,10 @@ function signAuthToken(user) {
       user_id: user.user_id,
       email: user.email,
       role_name: user.role_name,
+      purpose: 'access',
     },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
+    { expiresIn: JWT_EXPIRES_IN, algorithm: 'HS256' }
   );
 }
 
@@ -49,7 +50,7 @@ function signResetToken(resetToken) {
 }
 
 function verifyResetToken(token) {
-  const payload = jwt.verify(token, JWT_SECRET);
+  const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
   if (payload.purpose !== 'password_reset') {
     throw new Error('Token đặt lại mật khẩu không hợp lệ');
   }

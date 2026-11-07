@@ -1,3 +1,4 @@
+const costing = require('./costing.service');
 const pool = require("../config/db");
 const loyalty = require("./loyalty.service");
 
@@ -83,6 +84,7 @@ async function getOrderForPayment(orderId, connection = pool) {
 }
 
 async function markOrderPaid(connection, orderId, { transactionId, gateway = "vnpay" }) {
+  await connection.execute('SELECT order_id FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
   const order = await getOrderForPayment(orderId, connection);
   if (!order) {
     return { ok: false, code: "ORDER_NOT_FOUND", message: "Không tìm thấy đơn hàng" };
@@ -90,6 +92,9 @@ async function markOrderPaid(connection, orderId, { transactionId, gateway = "vn
 
   if (["paid", "success"].includes(String(order.payment_status || "").toLowerCase())) {
     return { ok: true, alreadyPaid: true, order };
+  }
+  if (['cancelled', 'canceled', 'rejected'].includes(String(order.order_status || order.status || '').toLowerCase())) {
+    return { ok: false, code: 'ORDER_CLOSED', message: 'Đơn đã hủy/từ chối, cần đối soát giao dịch đến muộn' };
   }
 
   const columns = await ordersColumns(connection);
@@ -138,6 +143,7 @@ async function markOrderPaid(connection, orderId, { transactionId, gateway = "vn
   });
 
   await loyalty.finalizePaidOrderLoyalty(connection, orderId);
+  await costing.recognize(connection, orderId);
 
   return { ok: true, alreadyPaid: false, order };
 }
@@ -168,6 +174,7 @@ async function findPendingOrderByTransferContent(connection, transferContent) {
 }
 
 async function markOrderFailed(connection, orderId, { transactionId, gateway = "vnpay" }) {
+  await connection.execute('SELECT order_id FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
   const order = await getOrderForPayment(orderId, connection);
   if (!order) {
     return { ok: false, code: "ORDER_NOT_FOUND", message: "Không tìm thấy đơn hàng" };

@@ -1,7 +1,22 @@
+const costing = require('../services/costing.service');
 const express = require("express");
 const pool = require("../config/db");
+const { transferToShelf, transferLog } = require('../services/inventory-transfer.service');
+const { requireAuth, requireRoles } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
+router.use(requireAuth, requireRoles('admin', 'employee'));
+router.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+    req.body = req.body || {};
+    // This prefix is reserved for transaction receipts, never caller-supplied notes.
+    if (typeof req.body.note === 'string' && req.body.note.toLowerCase().startsWith('@shelf1:')) {
+      return res.status(400).json({ success: false, message: 'Tiền tố ghi chú được dành cho hệ thống' });
+    }
+    req.body.employee_id = req.user.user_id;
+  }
+  next();
+});
 
 function toInventoryItem(row) {
   return {
@@ -22,6 +37,23 @@ function toInventoryItem(row) {
     status: row.status,
   };
 }
+
+router.post('/transfer-to-shelf', async (req, res) => {
+  try {
+    const result = await transferToShelf(pool, req.user.user_id, req.body);
+    res.json({ success: true, data: { ...result, inventory: toInventoryItem(result.inventory) } });
+  } catch (error) {
+    res.status(error.status || 500).json({ success: false,
+      message: error.status ? error.message : 'Chưa xác định kết quả chuyển hàng. Hãy thử lại cùng mã thao tác.' });
+  }
+});
+
+router.post('/valuation', requireRoles('admin'), async (req,res) => {
+  try {
+    const data=await require('../services/valuation.service').record(pool,req.user.user_id,req.body);
+    res.json({success:true,data});
+  }catch(e){res.status(e.status||500).json({success:false,message:e.status?e.message:'Chưa xác định kết quả định giá. Thử lại cùng UUID.'});}
+});
 
 router.get("/items", async (req, res) => {
   try {
@@ -102,9 +134,13 @@ router.post("/items", async (req, res) => {
 
     const nextCategoryId = category_id ?? categoryId;
 
+    const initialStock = Number(stock ?? stockQuantity ?? 0);
+    if (!Number.isSafeInteger(initialStock) || initialStock < 0 || initialStock > 2147483647) {
+      return res.status(400).json({success:false,message:'Tồn đầu phải là số nguyên không âm hợp lệ'});
+    }
     const [result] = await pool.execute(
-      `INSERT INTO inventory_items (barcode, item_name, image_url, price, import_price, unit, stock, category_id, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      `INSERT INTO inventory_items (barcode, item_name, image_url, price, import_price, unit, stock, category_id, stock_cost, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
       [
         barcode,
         itemName,
@@ -114,6 +150,7 @@ router.post("/items", async (req, res) => {
         unit || "sp",
         Number(stock ?? stockQuantity ?? 0),
         Number(nextCategoryId),
+        Number(stock ?? stockQuantity ?? 0) === 0 ? '0.00' : nextImportPrice == null ? null : costing.money(costing.minor(nextImportPrice) * BigInt(stock ?? stockQuantity ?? 0)),
       ],
     );
 
@@ -161,7 +198,8 @@ router.put("/items/:id", async (req, res) => {
     }
     await pool.execute(
       `UPDATE inventory_items
-       SET barcode = COALESCE(?, barcode),
+       SET stock_cost = CASE WHEN (? IS NOT NULL AND ? <> stock) OR (? IS NOT NULL AND ? <> unit) THEN NULL ELSE stock_cost END,
+           barcode = COALESCE(?, barcode),
            item_name = COALESCE(?, item_name),
            image_url = ?,
            price = COALESCE(?, price),
@@ -172,6 +210,7 @@ router.put("/items/:id", async (req, res) => {
            status = COALESCE(?, status)
        WHERE inventory_item_id = ? OR barcode = ?`,
       [
+        stock ?? stockQuantity ?? null, stock ?? stockQuantity ?? null, unit || null, unit || null,
         barcode || null,
         item_name || name || null,
         image_url ?? null,
@@ -223,7 +262,7 @@ router.get("/logs", async (req, res) => {
        JOIN users u ON u.user_id = il.employee_id
        ORDER BY il.created_at DESC`,
     );
-    res.json({ success: true, data: rows });
+    res.json({ success: true, data: rows.map(transferLog) });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -282,7 +321,7 @@ router.post("/import", async (req, res) => {
       importPrice,
       note,
     } = req.body;
-    if (!inventory_item_id || !employee_id || Number(quantity) <= 0) {
+    if (!inventory_item_id || !employee_id || (!Number.isSafeInteger(Number(quantity)) || Number(quantity) <= 0)) {
       return res.status(400).json({
         success: false,
         message: "Vui lòng nhập inventory_item_id, employee_id, quantity",
@@ -297,14 +336,15 @@ router.post("/import", async (req, res) => {
 
     await connection.beginTransaction();
     const [items] = await connection.execute(
-      "SELECT inventory_item_id FROM inventory_items WHERE inventory_item_id = ? OR barcode = ? FOR UPDATE",
+      "SELECT inventory_item_id, stock, stock_cost FROM inventory_items WHERE inventory_item_id = ? OR barcode = ? FOR UPDATE",
       [inventory_item_id, inventory_item_id],
     );
     if (items.length === 0) throw new Error("Không tìm thấy hàng trong kho");
     const itemId = Number(items[0].inventory_item_id);
     await connection.execute(
-      "UPDATE inventory_items SET stock = stock + ?, import_price = ? WHERE inventory_item_id = ?",
-      [Number(quantity), Number(nextImportPrice), itemId],
+      "UPDATE inventory_items SET stock = stock + ?, import_price = ?, stock_cost = ? WHERE inventory_item_id = ?",
+      [Number(quantity), Number(nextImportPrice), costing.receive(Number(items[0].stock), items[0].stock_cost,
+        costing.money(costing.minor(nextImportPrice) * BigInt(quantity))), itemId],
     );
     await connection.execute(
       `INSERT INTO inventory_logs (inventory_item_id, product_id, employee_id, action, quantity, import_price, note)
@@ -333,7 +373,7 @@ router.post("/adjust", async (req, res) => {
   const connection = await pool.getConnection();
   try {
     const { inventory_item_id, employee_id, actual_quantity, note } = req.body;
-    if (!inventory_item_id || !employee_id || Number(actual_quantity) < 0) {
+    if (!inventory_item_id || !employee_id || (!Number.isSafeInteger(Number(actual_quantity)) || Number(actual_quantity) < 0)) {
       return res.status(400).json({
         success: false,
         message:
@@ -343,7 +383,7 @@ router.post("/adjust", async (req, res) => {
 
     await connection.beginTransaction();
     const [items] = await connection.execute(
-      "SELECT inventory_item_id, stock FROM inventory_items WHERE inventory_item_id = ? OR barcode = ? FOR UPDATE",
+      "SELECT inventory_item_id, stock, stock_cost FROM inventory_items WHERE inventory_item_id = ? OR barcode = ? FOR UPDATE",
       [inventory_item_id, inventory_item_id],
     );
     if (items.length === 0) {
@@ -355,8 +395,8 @@ router.post("/adjust", async (req, res) => {
     const difference = actualQuantity - beforeStock;
 
     await connection.execute(
-      "UPDATE inventory_items SET stock = ? WHERE inventory_item_id = ?",
-      [actualQuantity, Number(items[0].inventory_item_id)],
+      "UPDATE inventory_items SET stock = ?, stock_cost = ? WHERE inventory_item_id = ?",
+      [actualQuantity, actualQuantity === 0 ? '0.00' : difference > 0 ? null : difference < 0 ? costing.issue(beforeStock, items[0].stock_cost, -difference).remaining : items[0].stock_cost, Number(items[0].inventory_item_id)],
     );
     await connection.execute(
       `INSERT INTO inventory_logs (inventory_item_id, product_id, employee_id, action, quantity, note)
@@ -391,7 +431,7 @@ router.post("/export", async (req, res) => {
   try {
     const { inventory_item_id, product_id, employee_id, quantity, note } =
       req.body;
-    if (!inventory_item_id || !employee_id || Number(quantity) <= 0) {
+    if (!inventory_item_id || !employee_id || (!Number.isSafeInteger(Number(quantity)) || Number(quantity) <= 0)) {
       return res.status(400).json({
         success: false,
         message: "Vui lòng nhập inventory_item_id, employee_id, quantity",
@@ -400,7 +440,7 @@ router.post("/export", async (req, res) => {
 
     await connection.beginTransaction();
     const [items] = await connection.execute(
-      "SELECT inventory_item_id, stock FROM inventory_items WHERE inventory_item_id = ? OR barcode = ? FOR UPDATE",
+      "SELECT inventory_item_id, stock, stock_cost FROM inventory_items WHERE inventory_item_id = ? OR barcode = ? FOR UPDATE",
       [inventory_item_id, inventory_item_id],
     );
     if (items.length === 0) throw new Error("Không tìm thấy hàng trong kho");
@@ -408,8 +448,8 @@ router.post("/export", async (req, res) => {
       throw new Error("Không đủ tồn kho");
 
     await connection.execute(
-      "UPDATE inventory_items SET stock = stock - ? WHERE inventory_item_id = ?",
-      [Number(quantity), Number(items[0].inventory_item_id)],
+      "UPDATE inventory_items SET stock = stock - ?, stock_cost = ? WHERE inventory_item_id = ?",
+      [Number(quantity), costing.issue(Number(items[0].stock), items[0].stock_cost, Number(quantity)).remaining, Number(items[0].inventory_item_id)],
     );
     await connection.execute(
       `INSERT INTO inventory_logs (inventory_item_id, product_id, employee_id, action, quantity, note)

@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../config/db');
+const { requireAuth, requireRoles, isStaff } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
 
@@ -62,7 +63,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/scan/:code', async (req, res) => {
+router.get('/scan/:code', requireAuth, async (req, res) => {
   try {
     const code = req.params.code.trim();
     if (!code) {
@@ -90,6 +91,7 @@ router.get('/scan/:code', async (req, res) => {
       });
     }
 
+    if (!isStaff(req.user)) return res.status(404).json({ success: false, message: 'Không tìm thấy sản phẩm' });
     const [inventoryItems] = await pool.execute(
       `SELECT *
        FROM inventory_items
@@ -127,7 +129,7 @@ router.get('/scan/:code', async (req, res) => {
   }
 });
 
-router.get('/check-code/:code', async (req, res) => {
+router.get('/check-code/:code', requireAuth, requireRoles('admin', 'employee'), async (req, res) => {
   try {
     const code = (req.params.code || '').trim();
     if (!code) {
@@ -155,7 +157,7 @@ router.get('/check-code/:code', async (req, res) => {
   }
 });
 
-router.post('/generate-code', async (req, res) => {
+router.post('/generate-code', requireAuth, requireRoles('admin', 'employee'), async (req, res) => {
   try {
     const { prefix } = req.body;
     let codePrefix = String(prefix || 'SP').trim().toUpperCase();
@@ -202,7 +204,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, requireRoles('admin', 'employee'), async (req, res) => {
   try {
     const {
       product_name,
@@ -280,7 +282,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAuth, requireRoles('admin', 'employee'), async (req, res) => {
   try {
     const {
       product_name,
@@ -316,7 +318,8 @@ router.put('/:id', async (req, res) => {
 
     await pool.execute(
       `UPDATE products
-       SET product_name = COALESCE(?, product_name),
+       SET stock_cost = CASE WHEN (? IS NOT NULL AND ? <> stock) OR (? IS NOT NULL AND ? <> unit) THEN NULL ELSE stock_cost END,
+           product_name = COALESCE(?, product_name),
            barcode = COALESCE(?, barcode),
            description = ?,
            image_url = ?,
@@ -328,6 +331,7 @@ router.put('/:id', async (req, res) => {
            status = COALESCE(?, status)
        WHERE product_id = ?`,
       [
+        stock ?? stockQuantity ?? null, stock ?? stockQuantity ?? null, unit || null, unit || null,
         product_name || name || null,
         barcode || null,
         description ?? null,
@@ -364,7 +368,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAuth, requireRoles('admin', 'employee'), async (req, res) => {
   try {
     await pool.execute("UPDATE products SET status = 'deleted' WHERE product_id = ?", [req.params.id]);
     res.json({ success: true, message: 'Đã xóa sản phẩm' });

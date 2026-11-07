@@ -1,9 +1,11 @@
+const { eligible: reportEligible } = require('../services/reporting.service');
 const express = require('express');
 const pool = require('../config/db');
 const { hashPassword } = require('../services/auth.service');
-const { requireAuth, requireRoles } = require('../middlewares/auth.middleware');
+const { requireAuth, requireRoles, requireSelfOrAdmin, isOwner, isStaff } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
+router.use(requireAuth);
 
 function toUser(row) {
   return {
@@ -109,11 +111,14 @@ function emptyEmployeeSummary(user) {
 
 router.get('/', async (req, res) => {
   try {
+    const scope = isOwner(req.user) ? '' : isStaff(req.user) ? "WHERE r.role_name = 'customer' OR u.user_id = ?" : 'WHERE u.user_id = ?';
     const [rows] = await pool.execute(
       `SELECT u.*, r.role_name
        FROM users u
        JOIN roles r ON r.role_id = u.role_id
-       ORDER BY u.user_id DESC`
+       ${scope}
+       ORDER BY u.user_id DESC`,
+      isOwner(req.user) ? [] : [req.user.user_id]
     );
     res.json({ success: true, data: rows.map(toUser) });
   } catch (error) {
@@ -175,7 +180,7 @@ router.post('/', requireAuth, requireRoles('admin'), async (req, res) => {
   }
 });
 
-router.get('/:id/employee-summary', async (req, res) => {
+router.get('/:id/employee-summary', requireRoles('admin', 'employee'), requireSelfOrAdmin((req) => req.params.id), async (req, res) => {
   try {
     const [users] = await pool.execute(
       `SELECT u.*, r.role_name
@@ -232,18 +237,17 @@ router.get('/:id/employee-summary', async (req, res) => {
     let [summaryRows] = await pool.execute(
       `SELECT
          COUNT(DISTINCT o.order_id) AS total_orders,
-         COALESCE(SUM(p.amount), 0) AS total_revenue,
+         COALESCE(SUM(o.final_amount - COALESCE(rf.amount,0)), 0) AS total_revenue,
          COALESCE(SUM(lt.points_added), 0) AS total_points_added
        FROM orders o
-       JOIN payments p ON p.order_id = o.order_id
+       LEFT JOIN (SELECT order_id, SUM(amount) AS amount FROM sales_refunds GROUP BY order_id) rf ON rf.order_id=o.order_id
        LEFT JOIN (
-         SELECT order_id, SUM(CASE WHEN points_change > 0 THEN points_change ELSE 0 END) AS points_added
+         SELECT order_id, SUM(CASE WHEN type IN ('earn','reverse_earn') THEN points_change ELSE 0 END) AS points_added
          FROM loyalty_transactions
          GROUP BY order_id
        ) lt ON lt.order_id = o.order_id
        WHERE ${statsWhere}
-         AND p.status IN ('paid', 'success')
-         AND o.payment_status IN ('paid', 'success')`,
+         AND ${reportEligible}`,
       statsParams
     );
 
@@ -253,18 +257,17 @@ router.get('/:id/employee-summary', async (req, res) => {
       [summaryRows] = await pool.execute(
         `SELECT
            COUNT(DISTINCT o.order_id) AS total_orders,
-           COALESCE(SUM(p.amount), 0) AS total_revenue,
+           COALESCE(SUM(o.final_amount - COALESCE(rf.amount,0)), 0) AS total_revenue,
            COALESCE(SUM(lt.points_added), 0) AS total_points_added
          FROM orders o
-         JOIN payments p ON p.order_id = o.order_id
+         LEFT JOIN (SELECT order_id, SUM(amount) AS amount FROM sales_refunds GROUP BY order_id) rf ON rf.order_id=o.order_id
          LEFT JOIN (
-           SELECT order_id, SUM(CASE WHEN points_change > 0 THEN points_change ELSE 0 END) AS points_added
+           SELECT order_id, SUM(CASE WHEN type IN ('earn','reverse_earn') THEN points_change ELSE 0 END) AS points_added
            FROM loyalty_transactions
            GROUP BY order_id
          ) lt ON lt.order_id = o.order_id
          WHERE o.employee_id = ?
-           AND p.status IN ('paid', 'success')
-           AND o.payment_status IN ('paid', 'success')`,
+           AND ${reportEligible}`,
         [req.params.id]
       );
       summary = summaryRows[0] || {};
@@ -282,7 +285,8 @@ router.get('/:id/employee-summary', async (req, res) => {
       `SELECT o.order_id, ${hasOrdersShiftId ? 'o.shift_id' : 'NULL AS shift_id'}, o.total_amount, o.final_amount, o.payment_status,
               p.method, p.amount, p.status, p.paid_at
        FROM orders o
-       JOIN payments p ON p.order_id = o.order_id
+       JOIN (SELECT order_id, MAX(payment_id) AS payment_id FROM payments WHERE status IN ('paid','success') GROUP BY order_id) latest_paid ON latest_paid.order_id=o.order_id
+       JOIN payments p ON p.payment_id=latest_paid.payment_id
        WHERE ${historyWhere}
          AND p.status IN ('paid', 'success')
          AND o.payment_status IN ('paid', 'success')

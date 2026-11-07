@@ -1,6 +1,7 @@
 const express = require("express");
 const pool = require("../config/db");
-const { requireAuth } = require("../middlewares/auth.middleware");
+const { requireAuth, canAccessOrder } = require("../middlewares/auth.middleware");
+const { timingSafeEqual } = require('node:crypto');
 const vnpay = require("../services/vnpay.service");
 const orderPayment = require("../services/order-payment.service");
 
@@ -13,7 +14,7 @@ function digitsOnly(value) {
 }
 
 function currentUserId(req) {
-  return Number(req.user?.id || req.user?.user_id || req.get("x-user-id"));
+  return Number(req.user.user_id);
 }
 
 function clientIp(req) {
@@ -118,14 +119,16 @@ function normalizeBankWebhookPayloads(payload) {
 }
 
 function verifyBankWebhook(req) {
-  const expected = process.env.BANK_WEBHOOK_SECRET;
-  if (!expected) return true;
+  const expected = process.env.BANK_WEBHOOK_SECRET || process.env.SEPAY_API_KEY;
+  if (!expected) return false;
+  const apiKey = /^Apikey\s+(.+)$/i.exec(req.get('authorization') || '')?.[1];
   const provided =
+    apiKey ||
     req.get("x-bank-webhook-secret") ||
-    req.get("x-webhook-secret") ||
-    req.query.secret ||
-    req.body?.secret;
-  return provided === expected;
+    req.get("x-webhook-secret");
+  const actual = Buffer.from(String(provided || ''));
+  const wanted = Buffer.from(expected);
+  return actual.length === wanted.length && timingSafeEqual(actual, wanted);
 }
 
 function extractTransferContent(description) {
@@ -232,33 +235,17 @@ async function handleNormalizedBankTransaction(connection, normalized, rawPayloa
     ],
   );
 
-  await orderPayment.markOrderPaid(connection, orderId, {
+  const result = await orderPayment.markOrderPaid(connection, orderId, {
     transactionId: normalized.transactionId,
     gateway: "bank_transfer",
   });
+  if (!result.ok) return { success: false, status: 409, message: result.message };
 
   return {
     success: true,
     message: "Đã xác nhận thanh toán chuyển khoản",
     data: { orderId, paymentStatus: "paid", transferContent },
   };
-}
-
-async function canAccessOrder(userId, order) {
-  if (!userId || !order) return false;
-  if (Number(order.customer_id || 0) === userId) return true;
-  if (Number(order.employee_id || 0) === userId) return true;
-
-  const [users] = await pool.execute(
-    `SELECT r.role_name
-     FROM users u
-     LEFT JOIN roles r ON r.role_id = u.role_id
-     WHERE u.user_id = ?
-     LIMIT 1`,
-    [userId],
-  );
-  const role = String(users[0]?.role_name || "").toLowerCase();
-  return role.includes("admin") || role.includes("quản");
 }
 
 async function processVnpayCallback(query) {
@@ -316,6 +303,10 @@ async function processVnpayCallback(query) {
         transactionId: verified.transactionNo || verified.txnRef,
         gateway: "vnpay",
       });
+      if (!result.ok) {
+        await connection.rollback();
+        return { httpStatus: 409, rspCode: '02', message: result.message, paymentStatus: 'pending', orderId };
+      }
       await connection.commit();
       return {
         httpStatus: 200,
@@ -396,7 +387,7 @@ router.post("/vnpay/create", requireAuth, async (req, res) => {
     if (!order) {
       return res.status(404).json({ success: false, message: "Không tìm thấy đơn hàng" });
     }
-    if (Number(order.customer_id) !== userId) {
+    if (!canAccessOrder(req.user, order)) {
       return res.status(403).json({ success: false, message: "Không có quyền thanh toán đơn này" });
     }
     if (["paid", "success"].includes(String(order.payment_status || "").toLowerCase())) {
@@ -470,6 +461,9 @@ router.get("/vnpay-ipn", async (req, res) => {
 });
 
 async function bankWebhookHandler(req, res) {
+  if (!(process.env.BANK_WEBHOOK_SECRET || process.env.SEPAY_API_KEY)) {
+    return res.status(503).json({ success: false, message: 'Chưa cấu hình khóa xác thực webhook ngân hàng' });
+  }
   if (!verifyBankWebhook(req)) {
     return res.status(401).json({ success: false, message: "Webhook token không hợp lệ" });
   }
@@ -522,62 +516,5 @@ async function bankWebhookHandler(req, res) {
 
 router.post("/bank-webhook", bankWebhookHandler);
 router.post("/sepay", bankWebhookHandler);
-
-router.post("/bank-transfer/manual-confirm", requireAuth, async (req, res) => {
-  const userId = currentUserId(req);
-  const orderId = Number(req.body.order_id || req.body.orderId);
-  if (!userId) {
-    return res.status(401).json({ success: false, message: "Vui lòng đăng nhập" });
-  }
-  if (!orderId) {
-    return res.status(400).json({ success: false, message: "Thiếu orderId" });
-  }
-
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-
-    const order = await orderPayment.getOrderForPayment(orderId, connection);
-    if (!order) {
-      await connection.rollback();
-      return res.status(404).json({ success: false, message: "Không tìm thấy đơn hàng" });
-    }
-    if (!(await canAccessOrder(userId, order))) {
-      await connection.rollback();
-      return res.status(403).json({ success: false, message: "Không có quyền xác nhận đơn này" });
-    }
-    if (
-      order.payment_method &&
-      String(order.payment_method || "").toLowerCase() !== "bank_transfer"
-    ) {
-      await connection.rollback();
-      return res.status(400).json({ success: false, message: "Đơn hàng không phải thanh toán chuyển khoản" });
-    }
-
-    const transactionId =
-      order.transaction_id || `MANUAL_BANK_${orderId}_${Date.now()}`;
-    await orderPayment.markOrderPaid(connection, orderId, {
-      transactionId,
-      gateway: "bank_transfer",
-    });
-    await connection.commit();
-
-    const paidOrder = await orderPayment.getOrderForPayment(orderId);
-    return res.json({
-      success: true,
-      message: "Đã xác nhận chuyển khoản thủ công",
-      data: paidOrder,
-    });
-  } catch (error) {
-    await connection.rollback();
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi xác nhận chuyển khoản thủ công",
-      error: error.message,
-    });
-  } finally {
-    connection.release();
-  }
-});
 
 module.exports = router;

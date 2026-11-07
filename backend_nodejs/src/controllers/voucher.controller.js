@@ -1,75 +1,28 @@
 const pool = require("../config/db");
+const billing = require("../services/order-billing.service");
 
 // 1. VALIDATE VOUCHER - Kiểm tra và tính giảm giá
 exports.validateVoucher = async (req, res) => {
-  const { code, orderTotal, userId } = req.body;
-
   try {
-    // Tìm voucher
-    const [vouchers] = await pool.execute(
-      'SELECT * FROM vouchers WHERE code = ? AND status = "active"',
-      [code],
-    );
-
-    if (vouchers.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Mã voucher không tồn tại",
-      });
+    let items = req.body.items;
+    if (!items) {
+      const [rows] = await pool.execute(
+        'SELECT ci.product_id, ci.quantity FROM cart_items ci JOIN carts c ON c.cart_id = ci.cart_id WHERE c.user_id = ?',
+        [req.user.user_id],
+      );
+      items = rows;
     }
-
-    const voucher = vouchers[0];
-
-    // Kiểm tra hạn dùng
-    if (voucher.expiry_date && new Date(voucher.expiry_date) < new Date()) {
-      return res.status(400).json({
-        success: false,
-        message: "Voucher đã hết hạn",
-      });
-    }
-
-    // Kiểm tra giới hạn dùng toàn bộ
-    if (voucher.usage_limit && voucher.used_count >= voucher.usage_limit) {
-      return res.status(400).json({
-        success: false,
-        message: "Voucher đã hết lượt dùng",
-      });
-    }
-
-    // Kiểm tra đơn tối thiểu
-    if (orderTotal < voucher.min_order_amount) {
-      return res.status(400).json({
-        success: false,
-        message: `Đơn hàng phải tối thiểu ${voucher.min_order_amount.toLocaleString("vi-VN")} VND`,
-      });
-    }
-
-    // Tính giảm giá
-    let discountAmount = 0;
-    if (voucher.discount_type === "fixed") {
-      discountAmount = voucher.discount_value;
-    } else if (voucher.discount_type === "percent") {
-      discountAmount = orderTotal * (voucher.discount_value / 100);
-      if (voucher.max_discount && discountAmount > voucher.max_discount) {
-        discountAmount = voucher.max_discount;
-      }
-    }
-
-    // Không được giảm quá toàn bộ tiền
-    discountAmount = Math.min(discountAmount, orderTotal);
-
-    res.json({
-      success: true,
-      voucher: {
-        id: voucher.voucher_id,
-        code: voucher.code,
-        description: voucher.description,
-        discountAmount: parseFloat(discountAmount.toFixed(2)),
-        finalTotal: parseFloat((orderTotal - discountAmount).toFixed(2)),
-      },
+    const { totalMinor } = await billing.priceItems(pool, items, { lock: false });
+    const { voucher, discountAmount } = await billing.applyVoucher(pool, {
+      totalMinor, voucherCode: req.body.code, consume: false,
     });
+    if (!voucher) billing.fail('Vui lòng nhập mã voucher');
+    res.json({ success: true, voucher: {
+      id: voucher.voucher_id, code: voucher.code, description: voucher.description,
+      discountAmount, finalTotal: (totalMinor - billing.moneyMinor(discountAmount)) / 100, subtotal: totalMinor / 100,
+    } });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(error.status || 500).json({ success: false, message: error.status ? error.message : 'Chưa kiểm tra được voucher' });
   }
 };
 
@@ -161,7 +114,8 @@ exports.claimVoucher = async (req, res) => {
 
   try {
     const [vouchers] = await pool.execute(
-      `SELECT voucher_id, code, status, expiry_date, usage_limit, used_count
+      `SELECT voucher_id, code, status, expiry_date, usage_limit, used_count,
+              (expiry_date IS NOT NULL AND expiry_date < CURRENT_DATE()) AS is_expired
        FROM vouchers
        WHERE voucher_id = ?`,
       [id],
@@ -182,14 +136,14 @@ exports.claimVoucher = async (req, res) => {
       });
     }
 
-    if (voucher.expiry_date && new Date(voucher.expiry_date) < new Date()) {
+    if (Number(voucher.is_expired)) {
       return res.status(400).json({
         success: false,
         message: "Voucher da het han",
       });
     }
 
-    if (voucher.usage_limit && voucher.used_count >= voucher.usage_limit) {
+    if (voucher.usage_limit != null && Number(voucher.used_count || 0) >= Number(voucher.usage_limit)) {
       return res.status(400).json({
         success: false,
         message: "Voucher da het luot dung",
@@ -230,6 +184,7 @@ exports.createVoucher = async (req, res) => {
 
   try {
     // Validate input
+    billing.validateVoucherDefinition(req.body);
     if (!code || !discount_type || !discount_value) {
       return res.status(400).json({
         success: false,
@@ -254,9 +209,9 @@ exports.createVoucher = async (req, res) => {
         description || null,
         discount_type,
         discount_value,
-        min_order_amount || 0,
-        max_discount || null,
-        usage_limit || null,
+        min_order_amount ?? 0,
+        max_discount ?? null,
+        usage_limit ?? null,
         expiry_date || null,
       ],
     );
@@ -273,7 +228,7 @@ exports.createVoucher = async (req, res) => {
         message: "Mã voucher đã tồn tại",
       });
     }
-    res.status(500).json({ success: false, message: error.message });
+    res.status(error.status || 500).json({ success: false, message: error.message });
   }
 };
 
@@ -292,6 +247,7 @@ exports.updateVoucher = async (req, res) => {
   } = req.body;
 
   try {
+    billing.validateVoucherDefinition(req.body);
     const [result] = await pool.execute(
       `UPDATE vouchers
        SET description = ?, discount_type = ?, discount_value = ?,
@@ -302,9 +258,9 @@ exports.updateVoucher = async (req, res) => {
         description,
         discount_type,
         discount_value,
-        min_order_amount || 0,
-        max_discount || null,
-        usage_limit || null,
+        min_order_amount ?? 0,
+        max_discount ?? null,
+        usage_limit ?? null,
         expiry_date || null,
         status || "active",
         id,
@@ -323,7 +279,7 @@ exports.updateVoucher = async (req, res) => {
       message: "Cập nhật voucher thành công",
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(error.status || 500).json({ success: false, message: error.message });
   }
 };
 

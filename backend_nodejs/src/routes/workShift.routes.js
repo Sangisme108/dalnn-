@@ -1,8 +1,18 @@
 const express = require('express');
 const pool = require('../config/db');
+const { requireAuth, requireRoles, requireSelfOrAdmin, isOwner } = require('../middlewares/auth.middleware');
 const { assertCanStartShift } = require('./employeeSchedule.routes');
 
 const router = express.Router();
+router.use(requireAuth, requireRoles('admin', 'employee'));
+router.use((req, res, next) => {
+  const requested = req.body?.employee_id ?? req.query.employee_id ?? req.query.employeeId;
+  if (!isOwner(req.user) && requested != null && Number(requested) !== Number(req.user.user_id)) {
+    return res.status(403).json({ success: false, message: 'Bạn chỉ được thao tác ca làm của mình' });
+  }
+  if (req.method === 'POST' && !isOwner(req.user)) req.body.employee_id = req.user.user_id;
+  next();
+});
 
 function formatDateOnly(value) {
   if (!value) return null;
@@ -87,7 +97,7 @@ async function workShiftHasStatus(connection) {
 
 router.get('/', async (req, res) => {
   try {
-    const employeeId = Number(req.query.employee_id || req.query.employeeId);
+    const employeeId = isOwner(req.user) ? Number(req.query.employee_id || req.query.employeeId) : Number(req.user.user_id);
     const status = (req.query.status || '').toString().toLowerCase();
     const dateFilter = (req.query.date_filter || req.query.dateFilter || 'all').toString();
 
@@ -141,7 +151,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/employee/:employeeId', async (req, res) => {
+router.get('/employee/:employeeId', requireSelfOrAdmin((req) => req.params.employeeId), async (req, res) => {
   try {
     const employeeId = Number(req.params.employeeId);
     if (!employeeId) {

@@ -1,8 +1,10 @@
 const express = require('express');
 const pool = require('../config/db');
+const { requireAuth, requireRoles } = require('../middlewares/auth.middleware');
 const loyalty = require('../services/loyalty.service');
 
 const router = express.Router();
+router.use(requireAuth, requireRoles('admin', 'employee'));
 
 router.get('/customer', async (req, res) => {
   const phone = loyalty.normalizePhone(req.query.phone);
@@ -63,117 +65,30 @@ router.get('/customer', async (req, res) => {
 });
 
 router.post('/add', async (req, res) => {
-  const customerName = String(req.body.customerName || req.body.customer_name || '').trim();
-  const phone = loyalty.normalizePhone(req.body.phone);
-  const amount = Number(req.body.amount || 0);
-  const employeeId = Number(req.body.employeeId || req.body.employee_id || 0) || null;
-  const orderId = Number(req.body.orderId || req.body.order_id || 0) || null;
-
-  if (!customerName) {
-    return res.status(400).json({ success: false, message: 'Vui lòng nhập tên khách hàng' });
-  }
-  if (phone.length < 8 || phone.length > 15) {
-    return res.status(400).json({ success: false, message: 'Số điện thoại không hợp lệ' });
-  }
-  if (amount <= 0) {
-    return res.status(400).json({ success: false, message: 'Số tiền tích điểm không hợp lệ' });
-  }
-
-  const connection = await pool.getConnection();
+  const orderId = Number(req.body.orderId || req.body.order_id);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) return res.status(400).json({ success: false, message: 'Cần mã đơn đã thanh toán để tích điểm; không nhận số tiền tự nhập' });
+  let connection;
   try {
+    connection = await pool.getConnection();
     await connection.beginTransaction();
-    const customer = await loyalty.ensureCustomerByPhone(connection, {
-      customerName,
-      phone,
-    });
-
-    const currentPoints = Number(customer.points || 0);
-    const pointsAdded = loyalty.calculateEarnPoints(amount, currentPoints);
-    const totalPoints = currentPoints + pointsAdded;
-
-    if (orderId) {
-      const [orders] = await connection.execute(
-        `SELECT order_id, payment_status
-         FROM orders
-         WHERE order_id = ?
-         FOR UPDATE`,
-        [orderId],
-      );
-      if (orders.length === 0) {
-        await connection.rollback();
-        return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng' });
-      }
-      if (!['paid', 'success'].includes(String(orders[0].payment_status || '').toLowerCase())) {
-        await connection.rollback();
-        return res.status(409).json({
-          success: false,
-          message: 'Chỉ cộng điểm cho đơn hàng đã thanh toán',
-        });
-      }
-      if (await loyalty.transactionExists(connection, orderId, 'earn')) {
-        const [fresh] = await connection.execute(
-          'SELECT points FROM users WHERE user_id = ? LIMIT 1',
-          [customer.user_id],
-        );
-        await connection.commit();
-        return res.json({
-          success: true,
-          message: 'Đơn hàng này đã được cộng điểm trước đó',
-          data: {
-            customerId: customer.user_id,
-            customerName,
-            phone,
-            pointsAdded: 0,
-            totalPoints: Number(fresh[0]?.points || totalPoints),
-            duplicate: true,
-          },
-        });
-      }
-    }
-
-    await connection.execute(
-      'UPDATE users SET points = ? WHERE user_id = ?',
-      [totalPoints, customer.user_id],
-    );
-    await connection.execute(
-      `INSERT INTO loyalty_transactions (user_id, order_id, points_change, type, note)
-       VALUES (?, ?, ?, 'earn', ?)`,
-      [
-        customer.user_id,
-        orderId,
-        pointsAdded,
-        `POS tích điểm ${amount.toLocaleString('vi-VN')} VND${employeeId ? ` bởi NV ${employeeId}` : ''}`,
-      ],
-    );
-    if (orderId) {
-      await loyalty.updateOrderLoyaltyColumns(connection, orderId, {
-        points_earned: pointsAdded,
-      });
-    }
-
+    const [orders] = await connection.execute('SELECT * FROM orders WHERE order_id = ? FOR UPDATE', [orderId]);
+    const order = orders[0];
+    if (!order || !order.customer_id) { const error = new Error('Đơn không có khách hàng tích điểm'); error.status = 409; throw error; }
+    if (!['paid', 'success'].includes(String(order.payment_status).toLowerCase())) { const error = new Error('Chỉ cộng điểm cho đơn đã thanh toán'); error.status = 409; throw error; }
+    const [customers] = await connection.execute('SELECT user_id, full_name, phone, points FROM users WHERE user_id = ? FOR UPDATE', [order.customer_id]);
+    const customer = customers[0];
+    if (!customer || (req.body.phone && loyalty.normalizePhone(req.body.phone) !== loyalty.normalizePhone(customer.phone))) { const error = new Error('Khách hàng không khớp đơn hàng'); error.status = 409; throw error; }
+    const duplicate = await loyalty.transactionExists(connection, orderId, 'earn');
+    const result = await loyalty.finalizePaidOrderLoyalty(connection, orderId);
     await connection.commit();
-    return res.json({
-      success: true,
-      message: 'Đã tích điểm khách hàng',
-      data: {
-        customerId: customer.user_id,
-        customerName,
-        phone,
-        pointsAdded,
-        totalPoints,
-      },
-    });
+    res.json({ success: true, message: duplicate ? 'Đơn đã được tích điểm' : 'Đã tích điểm theo số tiền thực tế của đơn', data: {
+      customerId: customer.user_id, customerName: customer.full_name, phone: customer.phone,
+      pointsAdded: duplicate ? 0 : result?.pointsEarned || 0, totalPoints: result?.totalPoints ?? Number(customer.points), duplicate,
+    } });
   } catch (error) {
-    await connection.rollback();
-    const status = error.status || (error.code === 'ER_DUP_ENTRY' ? 409 : 500);
-    return res.status(status).json({
-      success: false,
-      message: 'Lỗi tích điểm khách hàng',
-      error: error.message,
-    });
-  } finally {
-    connection.release();
-  }
+    if (connection) { try { await connection.rollback(); } catch (_) {} }
+    res.status(error.status || 500).json({ success: false, message: error.status ? error.message : 'Chưa tích được điểm cho đơn hàng' });
+  } finally { if (connection) connection.release(); }
 });
 
 module.exports = router;

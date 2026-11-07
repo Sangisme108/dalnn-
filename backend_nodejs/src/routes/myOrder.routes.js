@@ -17,7 +17,7 @@ const paymentJoinSql = `
 `;
 
 function currentUserId(req) {
-  return Number(req.user?.id || req.user?.user_id || req.get("x-user-id"));
+  return Number(req.user.user_id);
 }
 
 function displayOrderStatus(row) {

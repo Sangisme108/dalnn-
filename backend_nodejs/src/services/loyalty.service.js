@@ -111,16 +111,19 @@ async function ensureCustomerByPhone(connection, { customerName, phone }) {
 
 function validateRedeem({ pointsToUse, availablePoints, amountAfterVoucher }) {
   const points = Number(pointsToUse || 0);
-  if (points <= 0) return { pointsUsed: 0, pointsDiscount: 0 };
+  if (!Number.isSafeInteger(points) || points < 0) {
+    const error = new Error('Số điểm sử dụng không hợp lệ'); error.status = 400; throw error;
+  }
+  if (points === 0) return { pointsUsed: 0, pointsDiscount: 0 };
   if (points % POINTS_STEP !== 0) {
-    throw new Error("Số điểm sử dụng phải là bội số của 100");
+    throw Object.assign(new Error("Số điểm sử dụng phải là bội số của 100"), { status: 400 });
   }
   if (points > Number(availablePoints || 0)) {
-    throw new Error("Số điểm sử dụng lớn hơn điểm hiện có");
+    throw Object.assign(new Error("Số điểm sử dụng lớn hơn điểm hiện có"), { status: 409 });
   }
   const quote = redeemQuote(availablePoints, amountAfterVoucher);
   if (points > quote.maxRedeemPoints) {
-    throw new Error("Số điểm sử dụng vượt quá số tiền cần thanh toán");
+    throw Object.assign(new Error("Số điểm sử dụng vượt quá số tiền cần thanh toán"), { status: 400 });
   }
   return { pointsUsed: points, pointsDiscount: pointsToDiscount(points) };
 }
@@ -132,6 +135,34 @@ async function transactionExists(connection, orderId, type) {
     [orderId, type],
   );
   return rows.length > 0;
+}
+
+async function reserveOrderPoints(connection, orderId, customerId, pointsUsed, amountAfterVoucher) {
+  if (!pointsUsed) return;
+  const [rows] = await connection.execute('SELECT user_id, points FROM users WHERE user_id = ? FOR UPDATE', [customerId]);
+  if (!rows[0]) throw new Error('Không tìm thấy khách hàng để dùng điểm');
+  validateRedeem({ pointsToUse: pointsUsed, availablePoints: Number(rows[0].points), amountAfterVoucher });
+  const [result] = await connection.execute('UPDATE users SET points = points - ? WHERE user_id = ? AND points >= ?', [pointsUsed, customerId, pointsUsed]);
+  if (result.affectedRows !== 1) { const error = new Error('Điểm hiện có không đủ'); error.status = 409; throw error; }
+  await connection.execute(
+    "INSERT INTO loyalty_transactions (user_id, order_id, points_change, type, note) VALUES (?, ?, ?, 'redeem', ?)",
+    [customerId, orderId, -pointsUsed, 'Giữ điểm cho đơn hàng; hoàn lại nếu hủy khi chưa thanh toán'],
+  );
+}
+
+async function releaseUnpaidPoints(connection, order) {
+  if (!order.customer_id || ['paid', 'success'].includes(String(order.payment_status).toLowerCase())) return;
+  if (await transactionExists(connection, order.order_id, 'refund_redeem')) return;
+  const [redeems] = await connection.execute(
+    "SELECT points_change FROM loyalty_transactions WHERE order_id = ? AND type = 'redeem'", [order.order_id],
+  );
+  const points = -redeems.reduce((sum, entry) => sum + Number(entry.points_change), 0);
+  if (points <= 0) return;
+  await connection.execute('UPDATE users SET points = points + ? WHERE user_id = ?', [points, order.customer_id]);
+  await connection.execute(
+    "INSERT INTO loyalty_transactions (user_id, order_id, points_change, type, note) VALUES (?, ?, ?, 'refund_redeem', ?)",
+    [order.customer_id, order.order_id, points, 'Hoàn điểm giữ cho đơn chưa thanh toán bị hủy/từ chối'],
+  );
 }
 
 async function updateOrderLoyaltyColumns(connection, orderId, values) {
@@ -265,6 +296,8 @@ module.exports = {
   findCustomerByPhone,
   ensureCustomerByPhone,
   validateRedeem,
+  reserveOrderPoints,
+  releaseUnpaidPoints,
   finalizePaidOrderLoyalty,
   updateOrderLoyaltyColumns,
   transactionExists,

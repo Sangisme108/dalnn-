@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const { requireAuth, requireRoles } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
 const uploadDir = path.join(__dirname, '..', '..', 'uploads', 'products');
@@ -32,7 +33,7 @@ const upload = multer({
   },
 });
 
-router.post('/product-image', (req, res) => {
+router.post('/product-image', requireAuth, requireRoles('admin', 'employee'), (req, res) => {
   upload.single('image')(req, res, (error) => {
     if (error) {
       return res.status(400).json({

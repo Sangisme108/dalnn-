@@ -6,6 +6,7 @@ const vm = require('node:vm');
 async function run(pool) {
   const routes = {};
   const router = Object.fromEntries(['get', 'post', 'put', 'patch', 'delete'].map((method) => [method, (route, ...handlers) => { routes[`${method} ${route}`] = handlers.at(-1); }]));
+  router.use = () => {};
   const sandbox = {
     require: (name) => name === 'express' ? { Router: () => router }
       : name.includes('config/db') ? pool

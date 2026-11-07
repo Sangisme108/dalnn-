@@ -12,10 +12,14 @@ const pool = mysql.createPool({
   ...(process.env.DB_SSL === "false"
     ? {}
     : { ssl: { rejectUnauthorized: false } }),
+  timezone: '+07:00',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 });
+
+// TIMESTAMP and DATETIME reporting use one explicit business timezone.
+pool.pool.on('connection', (connection) => connection.query("SET time_zone = '+07:00'"));
 
 // Xuất biến pool ra để server.js sử dụng
 module.exports = pool;

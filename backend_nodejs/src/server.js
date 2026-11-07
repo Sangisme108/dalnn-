@@ -4,6 +4,7 @@ const path = require("path");
 require("dotenv").config();
 
 const pool = require("./config/db");
+const { requireAuth, requireRoles } = require('./middlewares/auth.middleware');
 
 const app = express();
 
@@ -60,7 +61,7 @@ app.get("/", (req, res) => {
   });
 });
 
-app.get("/api/test-db", async (req, res) => {
+app.get("/api/test-db", requireAuth, requireRoles('admin'), async (req, res) => {
   try {
     const [rows] = await pool.execute("SELECT * FROM roles");
 

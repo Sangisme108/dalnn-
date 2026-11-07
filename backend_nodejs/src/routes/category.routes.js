@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../config/db');
+const { requireAuth, requireRoles } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, requireRoles('admin', 'employee'), async (req, res) => {
   try {
     const { category_name } = req.body;
     if (!category_name) {
@@ -33,7 +34,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAuth, requireRoles('admin', 'employee'), async (req, res) => {
   try {
     const { category_name } = req.body;
     if (!category_name) {
@@ -54,7 +55,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAuth, requireRoles('admin', 'employee'), async (req, res) => {
   try {
     await pool.execute('DELETE FROM categories WHERE category_id = ?', [req.params.id]);
     res.json({ success: true, message: 'Đã xóa danh mục' });

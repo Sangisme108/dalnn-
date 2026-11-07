@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../config/db');
-const { requireAuth } = require('../middlewares/auth.middleware');
+const { requireAuth, requireSelfOrAdmin } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
 
@@ -139,7 +139,7 @@ router.delete('/remove', requireAuth, async (req, res) => {
 });
 
 // Backward-compatible routes for current Flutter screens.
-router.get('/:userId', requireAuth, async (req, res) => {
+router.get('/:userId', requireAuth, requireSelfOrAdmin((req) => req.params.userId), async (req, res) => {
   try {
     const userId = currentUserId(req);
     const data = await fetchCartPayload(userId);
@@ -149,7 +149,7 @@ router.get('/:userId', requireAuth, async (req, res) => {
   }
 });
 
-router.put('/:userId', requireAuth, async (req, res) => {
+router.put('/:userId', requireAuth, requireSelfOrAdmin((req) => req.params.userId), async (req, res) => {
   const connection = await pool.getConnection();
   try {
     const userId = currentUserId(req);

@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const voucherController = require("../controllers/voucher.controller");
 const { requireAuth } = require("../middlewares/auth.middleware");
+router.use(requireAuth);
 
 // PUBLIC ROUTES (khách hàng)
 // Validate voucher khi thanh toán
